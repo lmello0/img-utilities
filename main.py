@@ -1,79 +1,64 @@
 import os
-from PIL import Image
-import multiprocessing
+import hashlib
+import sys
+from tqdm import tqdm
 
 
-def are_images_equal(image_path1: str, image_path2: str) -> bool:
-    img1 = Image.open(image_path1)
-    img2 = Image.open(image_path2)
-
-    if img1.size != img2.size:
-        return False
-
-    pixel_pairs = zip(img1.getdata(), img2.getdata())
-    differences = [p1 != p2 for p1, p2 in pixel_pairs]
-
-    if any(differences):
-        return False
-
-    return True
+def compute_hash(filepath: str) -> str:
+    """Compute hash value of a file"""
+    with open(filepath, 'rb') as f:
+        return hashlib.md5(f.read()).hexdigest()
 
 
-def compare_images(subset: list[str], images_to_compare: list[str], name: str) -> int:
-    count = 0
+def is_image_file(filename: str) -> bool:
+    """Check if a file is an image."""
+    image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 
-    for idx, image1 in enumerate(subset, start=1):
-        print(f'{name}: [{idx}/{len(subset)}]')
-
-        for idx, image2 in enumerate(images_to_compare):
-            if image1 == image2:
-                continue
-
-            try:
-                if are_images_equal(image1, image2):
-                    os.remove(image2)
-                    # print(f"Deleted {os.path.basename(image2)}")
-                    count += 1
-
-            except FileNotFoundError:
-                continue
-
-    return count
+    return any(filename.endswith(ext) for ext in image_extensions)
 
 
-def main():
-    base_path = "/mnt/c/Users/mello/OneDrive/Área de Trabalho/WhatsApp Stickers/"
-    images = [os.path.join(base_path, image)
-              for image in os.listdir(base_path)]
+def find_duplicate_images(folder_path: str, threshold=0) -> list:
+    """Find duplicate images in a folder."""
+    images = [os.path.join(folder_path, f)
+              for f in os.listdir(folder_path) if is_image_file(f)]
+    hash_dict = {}
 
-    cpu_count = multiprocessing.cpu_count() - 3
-    images_per_process = len(images) // cpu_count
-    processes = []
+    with tqdm(total=len(images), desc="Computing hashes") as pbar:
+        for idx, filepath in enumerate(images, start=1):
+            # if idx % 100 == 0:
+            #     print(f'[{idx}/{len(images)}]')
 
-    for i in range(cpu_count):
-        start_index = i * images_per_process
-        end_index = (i + 1) * images_per_process if i < cpu_count - \
-            1 else len(images)
+            image_hash = compute_hash(filepath)
+            hash_dict.setdefault(image_hash, []).append(filepath)
 
-        images_subset = images[start_index:end_index]
+            pbar.update(1)
 
-        process = multiprocessing.Process(target=compare_images, args=(
-            images_subset, images[:start_index] + images[end_index:], f'Process {i}'))
+    duplicate_groups = [
+        group for group in hash_dict.values() if len(group) > 1]
 
-        processes.append(process)
-        process.start()
+    return duplicate_groups
 
-    for process in processes:
-        process.join()
 
-    remaining_images = [os.path.join(base_path, image)
-                        for image in os.listdir(base_path)]
+def get_extension(filename: str) -> str:
+    _, ext = os.path.splitext(filename)
 
-    with open('file.txt', 'w') as file:
-        file.write(f'Total files before operation.: {len(images)}')
-        file.write(f'Total files after operation.: {len(remaining_images)}')
-        file.write(
-            f'Total files deleted.: {len(images) - len(remaining_images)}')
+    return ext
+
 
 if __name__ == '__main__':
-    main()
+    if len(sys.argv) <= 1:
+        raise Exception('No filepath given')
+
+    folder_path = sys.argv[1]
+
+    duplicates = find_duplicate_images(folder_path)
+
+    if duplicates:
+        with tqdm(total=len(duplicates), desc="Deleting files") as pbar:
+            for group in duplicates:
+                for image in group[1:]:
+                    os.remove(image)
+
+                pbar.update(1)
+    else:
+        print('No duplicate images found.')
